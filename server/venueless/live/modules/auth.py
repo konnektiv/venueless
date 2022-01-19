@@ -7,6 +7,7 @@ from django.conf import settings
 from sentry_sdk import configure_scope
 
 from venueless.core.permissions import Permission
+from venueless.core.services.announcement import get_announcements
 from venueless.core.services.chat import ChatService
 from venueless.core.services.connections import (
     get_user_connection_count,
@@ -105,6 +106,9 @@ class AuthModule(BaseModule):
                     "chat.channels": login_result.chat_channels,
                     "chat.read_pointers": read_pointers,
                     "exhibition": login_result.exhibition_data,
+                    "announcements": await get_announcements(
+                        world=self.consumer.world.id, moderator=False
+                    ),
                 },
             ]
         )
