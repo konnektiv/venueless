@@ -100,6 +100,7 @@ class AppView(View):
                             "scheduleImport": reverse("storage:schedule_import"),
                             "feedback": reverse("live:feedback"),
                         },
+                        "redirectOnInvalidToken": world.config.get("redirect_on_invalid_token", ""),
                         "features": world.feature_flags,
                         "locale": world.locale,
                         "dateLocale": world.config.get("dateLocale", "en-ie"),

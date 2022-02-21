@@ -127,6 +127,7 @@ class WorldForm(forms.ModelForm):
             "locale",
             "timezone",
             "feature_flags",
+            "redirect_on_invalid_token"
         )
 
     def __init__(self, *args, **kwargs):

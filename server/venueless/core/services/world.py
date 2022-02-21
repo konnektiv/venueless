@@ -31,6 +31,7 @@ class WorldConfigSerializer(serializers.Serializer):
     title = serializers.CharField()
     locale = serializers.CharField()
     dateLocale = serializers.CharField()
+    redirectOnInvalidToken = serializers.CharField()
     videoPlayer = serializers.DictField(allow_null=True)
     timezone = serializers.ChoiceField(choices=[(a, a) for a in common_timezones])
     connection_limit = serializers.IntegerField(allow_null=True)
@@ -352,6 +353,7 @@ def _config_serializer(world, *args, **kwargs):
             "profile_fields": world.config.get("profile_fields", []),
             "conftool_url": world.config.get("conftool_url", ""),
             "conftool_password": world.config.get("conftool_password", ""),
+            "redirect_on_invalid_token": world.config.get("redirect_on_invalid_token", ""),
         },
         *args,
         **kwargs,

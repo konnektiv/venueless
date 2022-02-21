@@ -88,6 +88,7 @@ class WorldModule(BaseModule):
                 "track_exhibitor_views",
                 "conftool_url",
                 "conftool_password",
+                "redirect_on_invalid_token"
             )
             model_fields = ("title", "locale", "timezone", "roles", "trait_grants")
             update_fields = set()
