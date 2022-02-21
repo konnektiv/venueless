@@ -102,13 +102,13 @@ export default new Vuex.Store({
 			api.on('error', error => {
 				switch (error.code) {
 					case 'auth.invalid_token':
+					case 'auth.missing_id_or_token':
+					case 'auth.denied':
 						if ( config.redirectOnInvalidToken ) {
 							location = config.redirectOnInvalidToken;
 							return;
 						}
 					case 'world.unknown_world':
-					case 'auth.denied':
-					case 'auth.missing_id_or_token':
 					case 'connection.replaced':
 						state.fatalConnectionError = error
 						api.close()
