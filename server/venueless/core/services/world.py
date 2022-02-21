@@ -351,7 +351,7 @@ def _config_serializer(world, *args, **kwargs):
             "connection_limit": world.config.get("connection_limit", 0),
             "profile_fields": world.config.get("profile_fields", []),
             "conftool_url": world.config.get("conftool_url", ""),
-            "conftool_password": world.config.get("conftool_password", ""),
+            "conftool_password": world.config.get("conftool_password", "")
         },
         *args,
         **kwargs,

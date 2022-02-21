@@ -10,6 +10,7 @@ import exhibition from './exhibition'
 import schedule from './schedule'
 import notifications from './notifications'
 import moment from 'lib/timetravelMoment'
+import config from 'config'
 
 Vue.use(Vuex)
 
@@ -100,8 +101,12 @@ export default new Vuex.Store({
 			})
 			api.on('error', error => {
 				switch (error.code) {
-					case 'world.unknown_world':
 					case 'auth.invalid_token':
+						if ( config.redirectOnInvalidToken ) {
+							location = config.redirectOnInvalidToken;
+							return;
+						}
+					case 'world.unknown_world':
 					case 'auth.denied':
 					case 'auth.missing_id_or_token':
 					case 'connection.replaced':
