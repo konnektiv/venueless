@@ -11,15 +11,15 @@ class Poster(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     import_id = models.TextField(null=True, blank=True, db_index=True)
-    title = models.CharField(max_length=255, null=True)
+    title = models.TextField(null=True)
     abstract = models.JSONField(default=default_text)
     authors = models.JSONField(default=default_text)
     tags = models.JSONField(default=default_text)
-    category = models.CharField(null=True, blank=True, max_length=50)
+    category = models.TextField(null=True, blank=True)
 
     poster_url = models.URLField(null=True, blank=True)  # TODO file upload
     poster_preview = models.URLField(null=True, blank=True)  # TODO file upload
-    schedule_session = models.CharField(null=True, blank=True, max_length=50)
+    schedule_session = models.TextField(null=True, blank=True)
 
     world = models.ForeignKey(
         to="World",
@@ -46,40 +46,67 @@ class Poster(models.Model):
         null=True,
     )
 
-    def serialize(self, user=None):
-        presenters = []
-        for presenter in self.presenters.order_by("id").all():
-            presenters.append(
-                presenter.user.serialize_public(
-                    trait_badges_map=self.world.config.get("trait_badges_map")
-                )
-            )
-        links = list(
-            self.links.order_by("display_text").values(
-                "display_text", "url", "sorting_priority"
-            )
-        )
-        votes = self.votes.all().count()
+    def serialize(self, user=None, list_format=False):
+        abstract = self.abstract
+        if list_format and abstract and "ops" in abstract:
+            max_abstract_length = 1000
+            shortened_abstract = {"ops": []}
+            char_count = 0
+            for op in self.abstract["ops"]:
+                if not isinstance(op.get("insert"), str):
+                    continue
+
+                if len(op["insert"]) > max_abstract_length - char_count:
+                    op["insert"] = (
+                        op["insert"][: (max_abstract_length - char_count)] + "…"
+                    )
+                shortened_abstract["ops"].append(op)
+
+                char_count += len(op["insert"])
+                if char_count >= max_abstract_length:
+                    break
+
+            abstract = shortened_abstract
 
         result = dict(
             id=str(self.id),
             title=self.title,
-            abstract=self.abstract,
+            abstract=abstract,
             authors=self.authors,
             category=self.category,
             tags=self.tags,
             poster_url=self.poster_url,
             poster_preview=self.poster_preview,
-            schedule_session=self.schedule_session,
-            presenters=presenters,
-            votes=votes,
-            links=links,
-            parent_room_id=str(self.parent_room_id),
-            channel=str(self.channel_id) if getattr(self, "channel_id", None) else None,
-            presentation_room_id=str(self.presentation_room_id)
-            if getattr(self, "presentation_room_id", None)
-            else None,
         )
+
+        if not list_format:
+            votes = self.votes.all().count()
+            presenters = []
+            for presenter in self.presenters.order_by("id").all():
+                presenters.append(
+                    presenter.user.serialize_public(
+                        trait_badges_map=self.world.config.get("trait_badges_map")
+                    )
+                )
+            links = list(
+                self.links.order_by("display_text").values(
+                    "display_text", "url", "sorting_priority"
+                )
+            )
+            result["links"] = links
+            result["presenters"] = presenters
+            result["channel"] = (
+                str(self.channel_id) if getattr(self, "channel_id", None) else None
+            )
+            result["votes"] = votes
+            result["presentation_room_id"] = (
+                str(self.presentation_room_id)
+                if getattr(self, "presentation_room_id", None)
+                else None
+            )
+            result["schedule_session"] = self.schedule_session
+            result["parent_room_id"] = str(self.parent_room_id)
+
         if user:
             result["has_voted"] = self.votes.filter(user=user).exists()
         return result

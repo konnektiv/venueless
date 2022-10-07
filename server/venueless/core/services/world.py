@@ -36,9 +36,14 @@ class WorldConfigSerializer(serializers.Serializer):
     connection_limit = serializers.IntegerField(allow_null=True)
     available_permissions = serializers.SerializerMethodField("_available_permissions")
     profile_fields = serializers.JSONField()
+    iframe_blockers = serializers.JSONField()
     track_exhibitor_views = serializers.BooleanField()
     track_room_views = serializers.BooleanField()
     track_world_views = serializers.BooleanField()
+    onsite_traits = serializers.JSONField(
+        required=False,
+        allow_null=False,
+    )
     conftool_url = serializers.URLField(
         required=False, allow_null=True, allow_blank=True
     )
@@ -160,6 +165,10 @@ def get_world_config_for_user(world, user):
             "title": world.title,
             "pretalx": world.config.get("pretalx", {}),
             "profile_fields": world.config.get("profile_fields", []),
+            "iframe_blockers": world.config.get(
+                "iframe_blockers", {"default": {"enabled": False, "policy_url": None}}
+            ),
+            "onsite_traits": world.config.get("onsite_traits", []),
         },
         "permissions": list(permissions[world]),
         "rooms": [],
@@ -350,8 +359,12 @@ def _config_serializer(world, *args, **kwargs):
             "trait_grants": world.trait_grants,
             "connection_limit": world.config.get("connection_limit", 0),
             "profile_fields": world.config.get("profile_fields", []),
+            "onsite_traits": world.config.get("onsite_traits", []),
             "conftool_url": world.config.get("conftool_url", ""),
             "conftool_password": world.config.get("conftool_password", ""),
+            "iframe_blockers": world.config.get(
+                "iframe_blockers", {"default": {"enabled": False, "policy_url": None}}
+            ),
         },
         *args,
         **kwargs,

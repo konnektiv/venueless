@@ -11,6 +11,7 @@ import RoomManager from 'views/rooms/manage'
 import Channel from 'views/channels/item'
 import Schedule from 'views/schedule'
 import Talk from 'views/schedule/talks/item'
+import Speakers from 'views/schedule/speakers'
 import Speaker from 'views/schedule/speakers/item'
 import Exhibitor from 'views/exhibitors/item'
 import ContactRequests from 'views/contact-requests'
@@ -75,6 +76,10 @@ const routes = [{
 		name: 'schedule:talk',
 		component: Talk,
 		props: true
+	}, {
+		path: '/schedule/speakers',
+		name: 'schedule:speakers',
+		component: Speakers
 	}, {
 		path: '/schedule/speakers/:speakerId',
 		name: 'schedule:speaker',
@@ -142,7 +147,7 @@ const routes = [{
 		name: 'admin:rooms:index',
 		component: () => import(/* webpackChunkName: "admin" */ 'views/admin/rooms/index')
 	}, {
-		path: '/admin/rooms/new',
+		path: '/admin/rooms/new/:type?',
 		name: 'admin:rooms:new',
 		component: () => import(/* webpackChunkName: "admin" */ 'views/admin/rooms/new')
 	}, {
@@ -150,6 +155,16 @@ const routes = [{
 		name: 'admin:rooms:item',
 		component: () => import(/* webpackChunkName: "admin" */ 'views/admin/rooms/item'),
 		props: true
+	}, {
+		path: '/admin/announcements',
+		name: 'admin:announcements',
+		component: () => import(/* webpackChunkName: "admin" */ 'views/admin/announcements'),
+		children: [{
+			path: ':announcementId',
+			name: 'admin:announcements:item',
+			component: () => import(/* webpackChunkName: "admin" */ 'views/admin/announcements/item'),
+			props: true
+		}]
 	}, {
 		path: '/admin/config',
 		component: () => import(/* webpackChunkName: "admin" */ 'views/admin/config'),
@@ -177,6 +192,10 @@ const routes = [{
 			path: 'registration',
 			name: 'admin:config:registration',
 			component: () => import(/* webpackChunkName: "admin" */ 'views/admin/config/registration')
+		}, {
+			path: 'privacy',
+			name: 'admin:config:privacy',
+			component: () => import(/* webpackChunkName: "admin" */ 'views/admin/config/privacy')
 		}, {
 			path: 'audit-log',
 			name: 'admin:config:audit-log',

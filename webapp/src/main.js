@@ -11,10 +11,13 @@ import store from 'store'
 import LinkIconButton from 'components/link-icon-button'
 import Scrollbars from 'components/Scrollbars'
 import MediaQueries from 'components/mixins/media-queries'
+import 'components/directives/dynamic-line-clamp'
 import 'styles/global.styl'
 import 'roboto-fontface'
 import 'roboto-fontface/css/roboto-condensed/roboto-condensed-fontface.css'
 import '@mdi/font/css/materialdesignicons.css'
+import 'quill/dist/quill.core.css'
+import 'styles/quill.styl'
 import i18n, { init as i18nInit } from 'i18n'
 import { emojiPlugin } from 'lib/emoji'
 import features from 'features'
@@ -64,8 +67,12 @@ async function init (token) {
 	}
 	store.dispatch('connect')
 
-	// TODO properly time between minutes
-	setInterval(() => store.commit('schedule/updateNow'), 30000)
+	setTimeout(() => {
+		store.commit('updateNow')
+		setInterval(() => {
+			store.commit('updateNow')
+		}, 60000)
+	}, 60000 - Date.now() % 60000) // align with full minutes
 	setInterval(() => store.dispatch('notifications/pollExternals'), 1000)
 	window.__venueless__release = RELEASE
 

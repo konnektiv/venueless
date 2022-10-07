@@ -8,9 +8,9 @@
 		.info-sidebar(v-if="$mq.above['1200px'] || activeTab === 'info'")
 			scrollbars(y)
 				.info
-					h2.category(v-if="poster.category") {{ poster.category }}
+					h2.category(v-if="poster.category") {{ categoriesLookup[poster.category] ? categoriesLookup[poster.category].label : poster.category }}
 					.tags
-						.tag(v-for="tag of poster.tags") {{ tag }}
+						.tag(v-for="tag of poster.tags") {{ tagsLookup[tag] ? tagsLookup[tag].label : tag }}
 					h1.title {{ poster.title }}
 					.authors
 						.author(v-for="author of poster.authors.authors")
@@ -27,7 +27,10 @@
 							.mdi.mdi-file-pdf-outline(v-if="file.url.toLowerCase().endsWith('pdf')")
 							.filename {{ file.display_text }}
 		template(v-if="$mq.above['1200px'] || activeTab === 'poster'")
-			a.poster.no-pdf(v-if="pdfLoadFailed", :href="poster.poster_url", target="_blank", title="Download poster")
+			div.poster.no-pdf(v-if="!poster.poster_url")
+				.mdi(:class="`mdi-file-remove-outline`")
+				p {{ $t("posters/item:poster-pdf:empty-placeholder") }}
+			a.poster.no-pdf(v-else-if="pdfLoadFailed", :href="poster.poster_url", target="_blank", title="Download poster")
 				.mdi(:class="`mdi-${getIconByFileEnding(poster.poster_url)}`")
 				p {{ $t("posters/item:poster-pdf:placeholder") }}
 			a.poster(v-else, v-scrollbar.x.y="", :href="poster.poster_url", target="_blank", :title="$t('posters/item:poster-pdf:tooltip')")
@@ -82,10 +85,31 @@ export default {
 			if (!this.poster?.presentation_room_id) return
 			return this.$store.state.rooms.find(room => room.id === this.poster.presentation_room_id)
 		},
+		parentRoom () {
+			if (!this.poster?.parent_room_id) return
+			return this.$store.state.rooms.find(room => room.id === this.poster.parent_room_id)
+		},
+		posterModule () {
+			return this.parentRoom?.modules?.find(module => module.type === 'poster.native')
+		},
 		session () {
 			if (!this.poster?.schedule_session || !this.$store.getters['schedule/sessions']) return
 			return this.$store.getters['schedule/sessions'].find(session => session.id === this.poster.schedule_session)
-		}
+		},
+		categoriesLookup () {
+			if (!this.posterModule?.config.categories) return {}
+			return this.posterModule.config.categories.reduce((acc, category) => {
+				acc[category.id] = category
+				return acc
+			}, {})
+		},
+		tagsLookup () {
+			if (!this.posterModule?.config.tags) return {}
+			return this.posterModule.config.tags.reduce((acc, tag) => {
+				acc[tag.id] = tag
+				return acc
+			}, {})
+		},
 	},
 	watch: {
 		async activeTab () {

@@ -53,6 +53,7 @@ def get_public_users(
     world_id,
     *,
     ids=None,
+    pretalx_ids=None,
     include_admin_info=False,
     trait_badges_map=None,
     include_banned=True,
@@ -62,15 +63,19 @@ def get_public_users(
     if ids is not None:
         qs = User.objects.filter(id__in=ids, world_id=world_id)
     else:
-        qs = User.objects.filter(world_id=world_id).order_by(
+        qs = User.objects.filter(world_id=world_id, deleted=False).order_by(
             "profile__display_name", "id"
         )
+    if pretalx_ids is not None:
+        qs = qs.filter(pretalx_id__in=pretalx_ids)
     if not include_banned:
         qs = qs.exclude(moderation_state=User.ModerationState.BANNED)
     return [
         dict(
             id=str(u["id"]),
             profile=u["profile"],
+            pretalx_id=u["pretalx_id"],
+            deleted=u["deleted"],
             inactive=(
                 u["last_login"] is None or u["last_login"] < now() - timedelta(hours=36)
             ),
@@ -92,7 +97,14 @@ def get_public_users(
             ),
         )
         for u in qs.values(
-            "id", "profile", "moderation_state", "token_id", "traits", "last_login"
+            "id",
+            "profile",
+            "deleted",
+            "moderation_state",
+            "token_id",
+            "traits",
+            "last_login",
+            "pretalx_id",
         )
     ]
 
@@ -140,6 +152,7 @@ def get_user(
             token_id=token_id,
             profile=with_token.get("profile") if with_token else None,
             traits=traits,
+            pretalx_id=with_token.get("pretalx_id") if with_token else None,
         )
     else:
         user = create_user(
@@ -150,18 +163,29 @@ def get_user(
     return user
 
 
-def create_user(world_id, *, token_id=None, client_id=None, traits=None, profile=None):
+def create_user(
+    world_id,
+    *,
+    token_id=None,
+    client_id=None,
+    traits=None,
+    profile=None,
+    pretalx_id=None,
+):
     return User.objects.create(
         world_id=world_id,
         token_id=token_id,
         client_id=client_id,
+        pretalx_id=pretalx_id,
         traits=traits or [],
         profile=profile or {},
     )
 
 
 @atomic
-def update_user(world_id, id, *, traits=None, public_data=None, serialize=True):
+def update_user(
+    world_id, id, *, traits=None, public_data=None, is_admin=False, serialize=True
+):
     # TODO: Exception handling
     user = (
         User.objects.select_related("world")
@@ -197,6 +221,24 @@ def update_user(world_id, id, *, traits=None, public_data=None, serialize=True):
             # TODO: Anything we want to validate here?
             user.profile = public_data.get("profile")
             save_fields.append("profile")
+
+        if (
+            is_admin
+            and "pretalx_id" in public_data
+            and public_data["pretalx_id"] != user.pretalx_id
+        ):
+            AuditLog.objects.create(
+                world_id=world_id,
+                user=user,
+                type="auth.user.pretalx_id.changed",
+                data={
+                    "object": str(user.pk),
+                    "old": user.pretalx_id,
+                    "new": public_data["pretalx_id"],
+                },
+            )
+            user.pretalx_id = public_data.get("pretalx_id")
+            save_fields.append("pretalx_id")
 
         if save_fields:
             user.save(update_fields=save_fields)
@@ -248,6 +290,11 @@ LoginResult = namedtuple(
 )
 
 
+class AuthError(Exception):
+    def __init__(self, code):
+        self.code = code
+
+
 def login(
     *,
     world=None,
@@ -260,12 +307,16 @@ def login(
 
     user = get_user(world=world, with_client_id=client_id, with_token=token)
 
-    if (
-        not user
-        or user.is_banned
-        or not world.has_permission(user=user, permission=Permission.WORLD_VIEW)
+    if user and user.is_banned:
+        raise AuthError("auth.denied")
+
+    if not user or not world.has_permission(
+        user=user, permission=Permission.WORLD_VIEW
     ):
-        return
+        if token:
+            raise AuthError("auth.denied")
+        else:
+            raise AuthError("auth.missing_token")
 
     user.last_login = now()
     user.save(update_fields=["last_login"])
@@ -308,6 +359,25 @@ def set_user_banned(world, user_id, by_user) -> bool:
         world=world,
         user=by_user,
         type="auth.user.banned",
+        data={
+            "object": user_id,
+        },
+    )
+    return True
+
+
+@database_sync_to_async
+@atomic
+def delete_user(world, user_id, by_user) -> bool:
+    user = get_user_by_id(world_id=world.pk, user_id=user_id)
+    if not user:
+        return False
+    user.soft_delete()
+
+    AuditLog.objects.create(
+        world=world,
+        user=by_user,
+        type="auth.user.deleted",
         data={
             "object": user_id,
         },
@@ -402,17 +472,29 @@ def list_users(
     page_size,
     search_term,
     search_fields=None,
+    badge=None,
     trait_badges_map=None,
     include_banned=True,
     include_admin_info=False,
 ) -> object:
     qs = (
-        User.objects.filter(world_id=world_id, show_publicly=True)
+        User.objects.filter(world_id=world_id, show_publicly=True, deleted=False)
         .exclude(profile__display_name__isnull=True)
         .exclude(profile__display_name__exact="")
     )
     if not include_banned:
         qs = qs.exclude(moderation_state=User.ModerationState.BANNED)
+    if badge:
+        conditions = []
+        if trait_badges_map:
+            for t_trait, t_badge in trait_badges_map.items():
+                if t_badge == badge:
+                    conditions.append(Q(traits__contains=[t_trait]))
+        if conditions:
+            qs = qs.filter(reduce(operator.or_, conditions))
+        else:
+            qs = qs.none()
+
     if search_term:
         conditions = [(Q(profile__display_name__icontains=search_term))]
         search_fields = search_fields or []
@@ -425,7 +507,13 @@ def list_users(
     try:
         p = Paginator(
             qs.order_by("profile__display_name").values(
-                "id", "profile", "traits", "last_login", "moderation_state", "token_id"
+                "id",
+                "profile",
+                "traits",
+                "last_login",
+                "moderation_state",
+                "token_id",
+                "pretalx_id",
             ),
             page_size,
         ).page(page)
@@ -435,6 +523,7 @@ def list_users(
                     dict(
                         id=str(u["id"]),
                         profile=u["profile"],
+                        pretalx_id=u["pretalx_id"],
                         inactive=u["last_login"] is None
                         or u["last_login"] < now() - timedelta(hours=36),
                         badges=sorted(

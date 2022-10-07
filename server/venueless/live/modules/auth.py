@@ -1,12 +1,14 @@
 import logging
 import time
 
+import jwt
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from django.conf import settings
 from sentry_sdk import configure_scope
 
 from venueless.core.permissions import Permission
+from venueless.core.services.announcement import get_announcements
 from venueless.core.services.chat import ChatService
 from venueless.core.services.connections import (
     get_user_connection_count,
@@ -14,7 +16,9 @@ from venueless.core.services.connections import (
     unregister_user_connection,
 )
 from venueless.core.services.user import (
+    AuthError,
     block_user,
+    delete_user,
     end_view,
     get_blocked_users,
     get_public_user,
@@ -60,23 +64,34 @@ class AuthModule(BaseModule):
                 return
             kwargs["client_id"] = client_id
         else:
-            token = self.consumer.world.decode_token(body["token"])
-            if not token:
+            try:
+                token = self.consumer.world.decode_token(
+                    body["token"], allow_raise=True
+                )
+            except jwt.exceptions.ExpiredSignatureError:
+                async with statsd() as s:
+                    s.increment(
+                        f"authentication.failed,reason=expired_token,world={self.consumer.world.pk}"
+                    )
+                    await self.consumer.send_error(code="auth.expired_token")
+                    return
+            except jwt.exceptions.InvalidTokenError:
                 async with statsd() as s:
                     s.increment(
                         f"authentication.failed,reason=invalid_token,world={self.consumer.world.pk}"
                     )
-                await self.consumer.send_error(code="auth.invalid_token")
-                return
+                    await self.consumer.send_error(code="auth.invalid_token")
+                    return
             kwargs["token"] = token
 
-        login_result = await database_sync_to_async(login)(**kwargs)
-        if not login_result:
+        try:
+            login_result = await database_sync_to_async(login)(**kwargs)
+        except AuthError as e:
             async with statsd() as s:
                 s.increment(
                     f"authentication.failed,reason=denied,world={self.consumer.world.pk}"
                 )
-            await self.consumer.send_error(code="auth.denied")
+            await self.consumer.send_error(code=e.code)
             return
 
         self.consumer.user = login_result.user
@@ -105,6 +120,9 @@ class AuthModule(BaseModule):
                     "chat.channels": login_result.chat_channels,
                     "chat.read_pointers": read_pointers,
                     "exhibition": login_result.exhibition_data,
+                    "announcements": await get_announcements(
+                        world=self.consumer.world.id, moderator=False
+                    ),
                 },
             ]
         )
@@ -217,6 +235,7 @@ class AuthModule(BaseModule):
             self.consumer.world.id,
             self.consumer.user.id,
             public_data=body,
+            is_admin=False,
             serialize=False,
         )
         self.consumer.user = user
@@ -239,6 +258,7 @@ class AuthModule(BaseModule):
             self.consumer.world.id,
             body.pop("id"),
             public_data=body,
+            is_admin=True,
             serialize=False,
         )
         await user_broadcast(
@@ -264,6 +284,16 @@ class AuthModule(BaseModule):
                 trait_badges_map=self.consumer.world.config.get("trait_badges_map"),
             )
             await self.consumer.send_success({u["id"]: u for u in users})
+        elif "pretalx_ids" in body:
+            users = await get_public_users(
+                self.consumer.world.id,
+                pretalx_ids=body.get("pretalx_ids")[:100],
+                include_admin_info=await self.consumer.world.has_permission_async(
+                    user=self.consumer.user, permission=Permission.WORLD_USERS_MANAGE
+                ),
+                trait_badges_map=self.consumer.world.config.get("trait_badges_map"),
+            )
+            await self.consumer.send_success({u["pretalx_id"]: u for u in users})
         else:
             user = await get_public_user(
                 self.consumer.world.id,
@@ -320,12 +350,13 @@ class AuthModule(BaseModule):
         page_size = list_conf.get("page_size", 20)
         search_min_chars = list_conf.get("search_min_chars", 0)
         profile_fields = self.consumer.world.config.get("profile_fields", {})
+        badge = body.get("badge")
         search_fields = [
             field["id"]
             for field in filter(lambda f: f.get("searchable", False), profile_fields)
             if "id" in field
         ]
-        if len(body["search_term"]) < search_min_chars:
+        if len(body["search_term"]) < search_min_chars and not badge:
             result = {
                 "results": [],
                 "isLastPage": True,
@@ -336,6 +367,7 @@ class AuthModule(BaseModule):
                 page=body["page"],
                 page_size=page_size,
                 search_term=body["search_term"],
+                badge=badge,
                 search_fields=search_fields,
                 include_admin_info=await self.consumer.world.has_permission_async(
                     user=self.consumer.user, permission=Permission.WORLD_USERS_MANAGE
@@ -347,6 +379,25 @@ class AuthModule(BaseModule):
                 trait_badges_map=self.consumer.world.config.get("trait_badges_map"),
             )
         await self.consumer.send_success(result)
+
+    @command("delete")
+    @require_world_permission(Permission.WORLD_USERS_MANAGE)
+    async def delete(self, body):
+        if body.get("id") == str(self.consumer.user.id):
+            await self.consumer.send_error(code="user.delete.self")
+            return
+        ok = await delete_user(
+            self.consumer.world, body.get("id"), by_user=self.consumer.user
+        )
+        if ok:
+            await self.consumer.send_success({})
+            # Force user browser to reload instead of drop to kick out of e.g. BBB sessions
+            await self.consumer.channel_layer.group_send(
+                GROUP_USER.format(id=body.get("id")),
+                {"type": "connection.reload"},
+            )
+        else:
+            await self.consumer.send_error(code="user.not_found")
 
     @command("ban")
     @require_world_permission(Permission.WORLD_USERS_MANAGE)

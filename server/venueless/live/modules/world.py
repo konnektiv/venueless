@@ -20,6 +20,7 @@ from venueless.graphs.tasks import (
     generate_question_history,
     generate_report,
     generate_room_views,
+    generate_session_views,
     generate_views,
 )
 from venueless.importers.tasks import conftool_update_schedule
@@ -86,8 +87,10 @@ class WorldModule(BaseModule):
                 "track_room_views",
                 "track_world_views",
                 "track_exhibitor_views",
+                "onsite_traits",
                 "conftool_url",
                 "conftool_password",
+                "iframe_blockers",
             )
             model_fields = ("title", "locale", "timezone", "roles", "trait_grants")
             update_fields = set()
@@ -157,6 +160,14 @@ class WorldModule(BaseModule):
     @require_world_permission(Permission.WORLD_GRAPHS)
     async def roomviews_generate(self, body):
         result = await sync_to_async(generate_room_views.apply_async)(
+            kwargs={"world": str(self.consumer.world.id), "input": body}
+        )
+        await self.consumer.send_success({"resultid": str(result.id)})
+
+    @command("report.generate.sessionviews")
+    @require_world_permission(Permission.WORLD_GRAPHS)
+    async def sessionviews_generate(self, body):
+        result = await sync_to_async(generate_session_views.apply_async)(
             kwargs={"world": str(self.consumer.world.id), "input": body}
         )
         await self.consumer.send_success({"resultid": str(result.id)})

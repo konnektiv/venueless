@@ -116,13 +116,19 @@ def build_room_view_fig(fig, room, begin, end, tz):
     values = [len(p[1]) for p in pairs]
     ax.plot(keys, values)
 
+    if values:
+        peak = max(values)
+        ax.axhline(y=peak, label=f"Peak ({peak})", linestyle="dotted", color="red")
+    else:
+        peak = 0
+
     ax.set_xlim(begin, end)
     if values:
         ax.set_ylim(0, max(values) * 1.1)
     else:
         ax.set_ylim(0, 100)
     ax.grid(True)
-    ax.set_ylabel(f"Unique viewers ({len(all_users)} total)")
+    ax.set_ylabel(f"Unique viewers ({len(all_users)} total, {peak} peak)")
 
     if isinstance(room, Room):
         reactions = (

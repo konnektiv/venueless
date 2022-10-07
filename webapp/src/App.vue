@@ -8,11 +8,12 @@
 			.mdi.mdi-alert-octagon
 			h1 {{ $t('App:fatal-connection-error:connection.replaced:headline') }}
 			bunt-button(@click="reload") {{ $t('App:fatal-connection-error:connection.replaced:action') }}
-		template(v-else-if="fatalConnectionError.code === 'auth.denied' || fatalConnectionError.code === 'auth.missing_id_or_token'")
+		template(v-else-if="['auth.denied', 'auth.invalid_token', 'auth.missing_token', 'auth.expired_token'].includes(fatalConnectionError.code)")
 			.mdi.mdi-alert-octagon
-			h1 {{ $t('App:fatal-connection-error:auth.denied:headline') }}
+			h1 {{ $t('App:fatal-connection-error:' + fatalConnectionError.code + ':headline') }}
 				br
-				| {{ $t('App:fatal-connection-error:auth.denied:text') }}
+				small {{ $t('App:fatal-connection-error:' + fatalConnectionError.code + ':text') }}
+			bunt-button(v-if="fatalConnectionError.code != 'auth.missing_token'", @click="clearTokenAndReload") {{ $t('App:fatal-connection-error:' + fatalConnectionError.code + ':action') }}
 		template(v-else)
 			h1 {{ $t('App:fatal-connection-error:else:headline') }}
 		p.code error code: {{ fatalConnectionError.code }}
@@ -21,7 +22,7 @@
 		transition(name="backdrop")
 			.sidebar-backdrop(v-if="$mq.below['l'] && showSidebar && !overrideSidebarCollapse", @pointerup="showSidebar = false")
 		rooms-sidebar(:show="$mq.above['l'] || showSidebar || overrideSidebarCollapse", @close="showSidebar = false")
-		router-view(:key="$route.fullPath", :role="roomHasMedia ? '' : 'main'")
+		router-view(:key="!$route.path.startsWith('/admin') ? $route.fullPath : null", :role="roomHasMedia ? '' : 'main'")
 		//- defining keys like this keeps the playing dom element alive for uninterupted transitions
 		media-source(v-if="roomHasMedia && user.profile.greeted", ref="primaryMediaSource", :room="room", :key="room.id", role="main")
 		media-source(v-if="call", ref="channelCallSource", :call="call", :background="call.channel !== $route.params.channelId", :key="call.id", @close="$store.dispatch('chat/leaveCall')")
@@ -151,6 +152,10 @@ export default {
 		},
 		toggleSidebar () {
 			this.showSidebar = !this.showSidebar
+		},
+		clearTokenAndReload () {
+			localStorage.removeItem('token')
+			location.reload()
 		},
 		reload () {
 			location.reload()

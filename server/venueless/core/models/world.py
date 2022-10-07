@@ -1,5 +1,4 @@
 from collections import defaultdict
-from contextlib import suppress
 from typing import List
 from urllib.parse import urljoin
 
@@ -148,12 +147,13 @@ class World(VersionedModel):
     def __str__(self):
         return f"{self.id} ({self.title})"
 
-    def decode_token(self, token):
+    def decode_token(self, token, allow_raise=False):
+        exc = None
         for jwt_config in self.config["JWT_secrets"]:
             secret = jwt_config["secret"]
             audience = jwt_config["audience"]
             issuer = jwt_config["issuer"]
-            with suppress(jwt.exceptions.InvalidTokenError):
+            try:
                 return jwt.decode(
                     token,
                     secret,
@@ -161,6 +161,13 @@ class World(VersionedModel):
                     audience=audience,
                     issuer=issuer,
                 )
+            except jwt.exceptions.ExpiredSignatureError:
+                if allow_raise:
+                    raise
+            except jwt.exceptions.InvalidTokenError as e:
+                exc = e
+        if exc and allow_raise:
+            raise exc
 
     def has_permission_implicit(
         self, *, traits, permissions: List[Permission], room=None
@@ -282,6 +289,7 @@ class World(VersionedModel):
             Feedback,
             Membership,
             Poll,
+            PosterPresenter,
             Question,
             Reaction,
             RoomView,
@@ -295,6 +303,7 @@ class World(VersionedModel):
         ChatEvent.objects.filter(channel__world=self).delete()
         Membership.objects.filter(channel__world=self).delete()
         ExhibitorStaff.objects.filter(exhibitor__world=self).delete()
+        PosterPresenter.objects.filter(poster__world=self).delete()
         ContactRequest.objects.filter(exhibitor__world=self).delete()
         ExhibitorView.objects.filter(exhibitor__world=self).delete()
         Reaction.objects.filter(room__world=self).delete()
@@ -305,9 +314,7 @@ class World(VersionedModel):
         Feedback.objects.filter(world=self).delete()
 
         for f in StoredFile.objects.filter(world=self):
-            if f.file:
-                f.file.delete(False)
-            f.delete()
+            f.full_delete()
 
         self.user_set.all().delete()
         self.domain = None
@@ -316,6 +323,9 @@ class World(VersionedModel):
     def clone_from(self, old, new_secrets):
         from venueless.core.models import Channel
         from venueless.storage.models import StoredFile
+
+        if self.pk == old.pk:
+            raise ValueError("Illegal attempt to clone into same world")
 
         def clone_stored_files(*, inst=None, attrs=None, struct=None, url=None):
             if inst and attrs:

@@ -25,7 +25,7 @@ async def world_communicator():
 
 @pytest.mark.asyncio
 @pytest.mark.django_db
-async def test_auth_with_client_id(world):
+async def test_auth_with_client_id(world, announcement, inactive_announcement):
     async with world_communicator() as c:
         await c.send_json_to(["authenticate", {"client_id": 4}])
         response = await c.receive_json_from()
@@ -36,6 +36,15 @@ async def test_auth_with_client_id(world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
+        }
+        assert len(response[1]["announcements"]) == 1
+        assert response[1]["announcements"][0] == {
+            "id": str(announcement.id),
+            "text": announcement.text,
+            "show_until": None,
+            "state": "active",
+            "is_visible": True,
         }
 
 
@@ -48,7 +57,7 @@ async def test_no_anonymous_access(world):
         await c.send_json_to(["authenticate", {"client_id": 4}])
         response = await c.receive_json_from()
         assert response[0] == "error"
-        assert response[1] == {"code": "auth.denied"}
+        assert response[1] == {"code": "auth.missing_token"}
         assert (await database_sync_to_async(User.objects.count)()) == 0
 
 
@@ -101,6 +110,7 @@ async def test_auth_with_jwt_token(index, world):
         "iat": iat,
         "uid": 123456,
         "traits": ["chat.read", "foo.bar"],
+        "pretalx_id": "FOOBAR",
     }
     token = jwt.encode(payload, config["secret"], algorithm="HS256")
     async with world_communicator() as c:
@@ -129,6 +139,7 @@ async def test_auth_with_jwt_token(index, world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
 
 
@@ -151,6 +162,7 @@ async def test_auth_with_invalid_jwt_token(world):
         await c.send_json_to(["authenticate", {"token": token}])
         response = await c.receive_json_from()
         assert response[0] == "error"
+        assert response[1] == {"code": "auth.invalid_token"}
 
 
 @pytest.mark.asyncio
@@ -167,6 +179,7 @@ async def test_update_user():
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         user_id = response[1]["user.config"]["id"]
 
@@ -174,7 +187,14 @@ async def test_update_user():
         assert response[0] == "authenticated"
 
         await c.send_json_to(
-            ["user.update", 123, {"profile": {"display_name": "Cool User"}}]
+            [
+                "user.update",
+                123,
+                {
+                    "profile": {"display_name": "Cool User"},
+                    "pretalx_id": "HAXXOR_NOT_ALLOWED",
+                },
+            ]
         )
         response = await c.receive_json_from()
         assert response == ["success", 123, {}], response
@@ -185,6 +205,8 @@ async def test_update_user():
             {
                 "profile": {"display_name": "Cool User"},
                 "badges": [],
+                "deleted": False,
+                "pretalx_id": None,
                 "inactive": False,
                 "id": user_id,
             },
@@ -199,9 +221,11 @@ async def test_update_user():
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         assert response[1]["user.config"]["profile"]["display_name"] == "Cool User"
         assert response[1]["user.config"]["id"] == user_id
+        assert response[1]["user.config"]["pretalx_id"] is None
 
 
 @pytest.mark.asyncio
@@ -243,6 +267,7 @@ async def test_auth_with_jwt_token_update_traits(world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         assert (
             await database_sync_to_async(get_user_by_token_id)("sample", "123456")
@@ -260,6 +285,7 @@ async def test_auth_with_jwt_token_update_traits(world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         assert (
             await database_sync_to_async(get_user_by_token_id)("sample", "123456")
@@ -291,6 +317,7 @@ async def test_auth_with_jwt_token_twice(world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         assert (
             await database_sync_to_async(get_user_by_token_id)("sample", "123456")
@@ -308,6 +335,7 @@ async def test_auth_with_jwt_token_twice(world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         assert (
             await database_sync_to_async(get_user_by_token_id)("sample", "123456")
@@ -330,6 +358,7 @@ async def test_fetch_user():
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         user_id = response[1]["user.config"]["id"]
 
@@ -351,6 +380,8 @@ async def test_fetch_user():
                 "id": user_id,
                 "profile": {"display_name": "Cool User"},
                 "badges": [],
+                "deleted": False,
+                "pretalx_id": None,
                 "inactive": False,
             },
         ]
@@ -364,6 +395,8 @@ async def test_fetch_user():
                 user_id: {
                     "id": user_id,
                     "badges": [],
+                    "deleted": False,
+                    "pretalx_id": None,
                     "inactive": False,
                     "profile": {"display_name": "Cool User"},
                 }
@@ -373,6 +406,26 @@ async def test_fetch_user():
         await c2.send_json_to(["user.fetch", 14, {"id": str(uuid.uuid4())}])
         response = await c2.receive_json_from()
         assert response == ["error", 14, {"code": "user.not_found"}]
+
+        u = await database_sync_to_async(User.objects.get)(pk=user_id)
+        u.pretalx_id = "1337"
+        await database_sync_to_async(u.save)()
+        await c2.send_json_to(["user.fetch", 14, {"pretalx_ids": ["1337"]}])
+        response = await c2.receive_json_from()
+        assert response == [
+            "success",
+            14,
+            {
+                "1337": {
+                    "id": user_id,
+                    "badges": [],
+                    "deleted": False,
+                    "pretalx_id": "1337",
+                    "inactive": False,
+                    "profile": {"display_name": "Cool User"},
+                }
+            },
+        ]
 
 
 @pytest.mark.asyncio
@@ -400,6 +453,7 @@ async def test_auth_with_jwt_token_and_permission_traits(world):
             "chat.channels",
             "chat.read_pointers",
             "exhibition",
+            "announcements",
         }
         assert set(response[1]["world.config"]["permissions"]) == {
             "world:view",
@@ -553,13 +607,49 @@ async def test_list_users(world):
                         "id": user_id,
                         "profile": {},
                         "moderation_state": "",
+                        "deleted": False,
                         "inactive": False,
                         "badges": [],
+                        "deleted": False,
+                        "pretalx_id": None,
                         "token_id": None,
                     }
                 ]
             },
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db
+async def test_delete_user(world):
+    async with world_communicator() as c_admin:
+        token = get_token(world, ["admin"])
+        await c_admin.send_json_to(["authenticate", {"token": token}])
+        await c_admin.receive_json_from()
+        user_token = get_token(world, ["user"])
+
+        async with world_communicator() as c_user:
+            await c_user.send_json_to(["authenticate", {"token": user_token}])
+            response = await c_user.receive_json_from()
+            user_id = response[1]["user.config"]["id"]
+
+            await c_admin.send_json_to(["user.delete", 14, {"id": user_id}])
+            response = await c_admin.receive_json_from()
+            assert response[0] == "success"
+
+            await c_admin.send_json_to(["user.delete", 14, {"id": str(uuid.uuid4())}])
+            response = await c_admin.receive_json_from()
+            assert response[0] == "error"
+
+            assert ["connection.reload", {}] == await c_user.receive_json_from()
+            assert {"type": "websocket.close"} == await c_user.receive_output(timeout=3)
+
+        # New connect will be an entirely new user
+        async with world_communicator() as c_user:
+            await c_user.send_json_to(["authenticate", {"token": user_token}])
+            response = await c_user.receive_json_from()
+            new_user_id = response[1]["user.config"]["id"]
+            assert new_user_id != user_id
 
 
 @pytest.mark.asyncio
@@ -722,9 +812,23 @@ async def test_block_user(world):
 @pytest.mark.asyncio
 @pytest.mark.django_db
 async def test_list_search_users(world):
+    config = world.config["JWT_secrets"][0]
+    iat = datetime.datetime.utcnow()
+    exp = iat + datetime.timedelta(days=999)
+    payload = {
+        "iss": config["issuer"],
+        "aud": config["audience"],
+        "exp": exp,
+        "iat": iat,
+        "uid": "123456",
+        "traits": ["moderator", "speaker"],
+    }
+    world.config["trait_badges_map"] = {"moderator": "Crew"}
+    await database_sync_to_async(world.save)()
+    token = jwt.encode(payload, config["secret"], algorithm="HS256")
     async with world_communicator() as c, world_communicator() as c_user1, world_communicator() as c_user2:
         # User 1
-        await c.send_json_to(["authenticate", {"client_id": "4"}])
+        await c.send_json_to(["authenticate", {"token": token}])
         response = await c.receive_json_from()
         assert response[0] == "authenticated"
         user_id = response[1]["user.config"]["id"]
@@ -804,7 +908,8 @@ async def test_list_search_users(world):
             "results": [
                 {
                     "id": user_id,
-                    "badges": [],
+                    "badges": ["Crew"],
+                    "pretalx_id": None,
                     "inactive": False,
                     "profile": {"display_name": "Foo Fighter"},
                 }
@@ -860,6 +965,18 @@ async def test_list_search_users(world):
             "results": [],
             "isLastPage": True,
         }
+
+        await c.send_json_to(
+            [
+                "user.list.search",
+                14,
+                {"page": 1, "search_term": "", "badge": "Crew"},
+            ]
+        )
+        response = await c.receive_json_from()
+        assert response[0] == "success"
+        assert len(response[2]["results"]) == 1
+        assert response[2]["results"][0]["id"] == user_id
 
 
 @pytest.mark.asyncio
